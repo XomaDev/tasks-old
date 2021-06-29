@@ -1,15 +1,17 @@
 package com.kumaraswamy.tasks;
 
 import android.app.job.JobInfo;
-import android.app.job.JobScheduler;
-import android.content.ComponentName;
 import android.content.Context;
-import android.os.PersistableBundle;
 import android.util.Log;
 import bsh.EvalError;
 import bsh.Interpreter;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -117,5 +119,75 @@ public class Utils {
             evalError.printStackTrace();
         }
         return "";
+    }
+
+
+    public static class CodeParser {
+        private static String valueReplacement(String code, Object[] parameters) {
+            for (int i = 0; i < parameters.length; i++) {
+                code = code.replace("{$" + i + "}", parameters[i].toString());
+            }
+            return code;
+        }
+
+        public static Object processCode(String code, Context activity, Object[] parameters) {
+            code = valueReplacement(code, parameters);
+
+            StringBuilder functionConstructor = new StringBuilder();
+            StringBuilder conditionConstructor = new StringBuilder();
+
+            boolean firstRun = false;
+            boolean secondRun = false;
+
+            for(Character character: code.toCharArray()) {
+                if(character == ':' && !firstRun) {
+                    firstRun = true;
+                } else if (character == ':' && !secondRun){
+                    secondRun = true;
+                } else {
+                    if(firstRun && secondRun) {
+                        functionConstructor.append(character);
+                    } else {
+                        conditionConstructor.append(character);
+                    }
+                }
+            }
+
+            String execute, condition;
+
+            if(functionConstructor.length() == 0 || functionConstructor.toString().isEmpty()) {
+                functionConstructor = conditionConstructor;
+                conditionConstructor = new StringBuilder().append(true);
+            }
+
+            execute = functionConstructor.toString();
+            condition = conditionConstructor.toString();
+
+            if(execute.charAt(0) == ' ') {
+                execute = execute.substring(1);
+            }
+
+            if(condition.charAt(condition.length() - 1) == ' ') {
+                condition = condition.substring(0, condition.length() - 1);
+            }
+
+            System.out.println(execute);
+            System.out.println(condition);
+
+            Object result = interpret("return " + condition + ";", activity);
+
+            Log.i(TAG, "processCode: The custom function result: " + result);
+
+
+            if(result instanceof Boolean && (boolean) result) {
+                String[] splitCurve = execute.split("\\(");
+                String functionType = splitCurve[0];
+                String functionID = execute.substring(functionType.length() + 1, execute.length() - 1);
+
+                return new String[] {functionType, functionID};
+            } else {
+                return "none";
+            }
+        }
     }
 }

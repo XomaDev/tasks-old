@@ -1,8 +1,6 @@
 package com.kumaraswamy.tasks;
 
 import android.app.Activity;
-import android.app.AlarmManager;
-import android.app.PendingIntent;
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
 import android.content.ComponentName;
@@ -14,6 +12,7 @@ import android.os.PersistableBundle;
 import android.util.Log;
 import android.view.WindowManager;
 import android.widget.Toast;
+
 import com.google.appinventor.components.annotations.DesignerProperty;
 import com.google.appinventor.components.annotations.SimpleFunction;
 import com.google.appinventor.components.annotations.SimpleProperty;
@@ -25,57 +24,47 @@ import com.google.appinventor.components.runtime.errors.YailRuntimeError;
 import com.google.appinventor.components.runtime.util.YailList;
 
 import java.util.ArrayList;
-import java.util.Calendar;
 import java.util.HashMap;
+import java.util.List;
 
-import static com.kumaraswamy.tasks.Utils.getNetworkInt;
-import static com.kumaraswamy.tasks.Utils.toObjectArray;
 
 public class Tasks extends AndroidNonvisibleComponent {
 
-  private static final Intent[] RESOLVE_INTENTS = {
-          new Intent().setComponent(new ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")),
-          new Intent().setComponent(new ComponentName("com.letv.android.letvsafe", "com.letv.android.letvsafe.AutobootManageActivity")),
-          new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity")),
-          new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity")),
-          new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity")),
-          new Intent().setComponent(new ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")),
-          new Intent().setComponent(new ComponentName("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity")),
-          new Intent().setComponent(new ComponentName("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity")),
-          new Intent().setComponent(new ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity")),
-          new Intent().setComponent(new ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager")),
-          new Intent().setComponent(new ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")),
-          new Intent().setComponent(new ComponentName("com.htc.pitroad", "com.htc.pitroad.landingpage.activity.LandingPageActivity")),
-          new Intent().setComponent(new ComponentName("com.asus.mobilemanager", "com.asus.mobilemanager.MainActivity")),
-          new Intent().setComponent(new ComponentName("com.transsion.phonemanager", "com.itel.autobootmanager.activity.AutoBootMgrActivity"))
-  };
-
   private int taskID = 0;
-  protected static final String ID_SEPARATOR = "/";
   private final String LOG_TAG = "BackgroundTasks";
-
-  protected static final int TASK_CREATE_FUNCTION = 1;
-  protected static final int TASK_INVOKE_FUNCTION = 2;
-  protected static final int TASK_CREATE_VARIABLE = 5;
-  protected static final int TASK_EXECUTE_FUNCTION = 6;
-  protected static final int TASK_REGISTER_EVENT = 7;
-  protected static final int TASK_DESTROY_COMPONENT = 8;
-  protected static final int TASK_DELAY = 3;
-  protected static final int TASK_FINISH = 4;
 
   protected static boolean createComponentsOnUi = false;
   protected static boolean foreground = false;
+  protected static boolean restartAfterKill = false;
 
-  protected static final HashMap<Integer, Object[]> pendingTasks = new HashMap<>();
-  private static final HashMap<String, String> componentsList = new HashMap<>();
-  protected static final ArrayList<String> tasksID = new ArrayList<>();
-  protected static final HashMap<String, String> statusFunctions = new HashMap<>();
-  private static Object[] foregroundConfig = new Object[] {"Foreground service", "The task is running", "Running!", ""};
+  protected static HashMap<Integer, Object[]> pendingTasks = new HashMap<>();
+  private static HashMap<String, String> componentsList = new HashMap<>();
+  protected static ArrayList<String> tasksID = new ArrayList<>();
+  protected static HashMap<String, String> statusFunctions = new HashMap<>();
+  private static HashMap<String, Object[]> extraFunctions = new HashMap<>();
+
+  private static Object[] foregroundConfig;
 
   protected static Activity activity;
   protected static ComponentContainer componentContainer;
 
   public static JobScheduler jobScheduler;
+
+  @SimpleFunction(description = "Clears the task lists but do not remove any executing/pending tasks.")
+  public void ResetTaskList() {
+    taskID = 0;
+    createComponentsOnUi = false;
+    foreground = false;
+    restartAfterKill = false;
+
+    pendingTasks = new HashMap<>();
+    componentsList = new HashMap<>();
+    tasksID = new ArrayList<>();
+    statusFunctions = new HashMap<>();
+    extraFunctions = new HashMap<>();
+
+    foregroundConfig = new Object[] {"Foreground service", "The task is running", "Running!", ""};
+  }
 
   public Tasks(ComponentContainer container) {
     super(container.$form());
@@ -87,18 +76,38 @@ public class Tasks extends AndroidNonvisibleComponent {
       return;
     }
 
+    ResetTaskList();
+
     activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     jobScheduler = (JobScheduler) activity.getSystemService(Context.JOB_SCHEDULER_SERVICE);
   }
 
   @SimpleFunction(description = "It's good to use this block when the screen initializes to prevent causing issues while starting the service in the background especially on Xiaomi and other devices.")
   public void ResolveActivity() {
-    for (Intent intent : RESOLVE_INTENTS) {
-      if (activity.getPackageManager().resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
+    for (int i = 0; i < Constants.intentsPackages.length; i++) {
+      ComponentName component = new ComponentName(Constants.intentsPackages[i],
+              Constants.intentSources[i]);
+      Intent intent = new Intent().setComponent(component);
+
+      if (activity.getPackageManager().resolveActivity(intent,
+                PackageManager.MATCH_DEFAULT_ONLY) != null) {
         activity.startActivity(intent);
         break;
       }
     }
+  }
+
+  @DesignerProperty(
+  defaultValue = "False",
+  editorType = PropertyTypeConstants.PROPERTY_TYPE_BOOLEAN)
+  @SimpleProperty(description = "Set true if the Job service should restart after being killed.")
+  public void RestartAfterKill(boolean bool) {
+    restartAfterKill = bool;
+  }
+
+  @SimpleProperty(description = "Gets the value for RestartAfterKill.")
+  public boolean RestartAfterKill() {
+    return restartAfterKill;
   }
 
   @SimpleFunction(description = "Creates a component. No matter if the app is running in the background or the foreground. All you need to do is to specify the component source name and the name which will be used to invoke functions and do other stuff.")
@@ -144,47 +153,49 @@ public class Tasks extends AndroidNonvisibleComponent {
 
   @SimpleFunction(description = "Creates a function of the component ID specified. Specify the component ID and the values. To access the invoked result use the 'invoke:result' value.")
   public void CreateFunction(String id, String name, String functionName, YailList values) {
-    tasksID.add(taskID + ID_SEPARATOR + TASK_CREATE_FUNCTION);
-    pendingTasks.put(taskID, toObjectArray(name, functionName, values, id));
+    tasksID.add(taskID + Constants.ID_SEPARATOR + Constants.TASK_CREATE_FUNCTION);
+    pendingTasks.put(taskID, Utils.toObjectArray(name, functionName, values, id));
     taskID++;
   }
 
   @SimpleFunction(description = "Calls the created function")
   public void CallFunction(String id) {
-    tasksID.add(taskID + ID_SEPARATOR + TASK_INVOKE_FUNCTION);
-    pendingTasks.put(taskID, toObjectArray(id));
+    tasksID.add(taskID + Constants.ID_SEPARATOR + Constants.TASK_INVOKE_FUNCTION);
+    pendingTasks.put(taskID, Utils.toObjectArray(id));
     taskID++;
   }
 
   @SimpleFunction(description = "Register for component's events.")
   public void RegisterEvent(String name, String functionId, String eventName) {
-    tasksID.add(taskID + ID_SEPARATOR + TASK_REGISTER_EVENT);
-    pendingTasks.put(taskID, toObjectArray(name, functionId, eventName));
+    tasksID.add(taskID + Constants.ID_SEPARATOR + Constants.TASK_REGISTER_EVENT);
+    pendingTasks.put(taskID, Utils.toObjectArray(name, functionId, eventName));
     taskID++;
   }
 
   @SimpleFunction(description = "Helps you call the created function multiple times")
   public void ExecuteFunction(String id, int times, int interval) {
-    tasksID.add(taskID + ID_SEPARATOR + TASK_EXECUTE_FUNCTION);
-    pendingTasks.put(taskID, toObjectArray(id, times, interval));
+    tasksID.add(taskID + Constants.ID_SEPARATOR + Constants.TASK_EXECUTE_FUNCTION);
+    pendingTasks.put(taskID, Utils.toObjectArray(id, times, interval));
     taskID++;
   }
 
   @SimpleFunction(description = "Create a variable with the given variable name which can be accessed by [VAR:<NAME>]. For example \"[VAR:Data]\". Use the extra value block and use the value to access the variable.")
   public void CreateVariable(String name, Object value) {
-    tasksID.add(taskID + ID_SEPARATOR + TASK_CREATE_VARIABLE);
-    pendingTasks.put(taskID, toObjectArray(name, value));
+    tasksID.add(taskID + Constants.ID_SEPARATOR + Constants.TASK_CREATE_VARIABLE);
+    pendingTasks.put(taskID, Utils.toObjectArray(name, value));
     taskID++;
   }
 
   @SimpleFunction(description = "Does a delay in the background. You can use it as intervals between function.")
   public void MakeDelay(long millis) {
-    tasksID.add(taskID + ID_SEPARATOR + TASK_DELAY);
-    pendingTasks.put(taskID, toObjectArray(millis));
+    tasksID.add(taskID + Constants.ID_SEPARATOR + Constants.TASK_DELAY);
+    pendingTasks.put(taskID, Utils.toObjectArray(millis));
     taskID++;
   }
 
-  @DesignerProperty(defaultValue = "False", editorType = PropertyTypeConstants.PROPERTY_TYPE_BOOLEAN)
+  @DesignerProperty(
+  defaultValue = "False",
+  editorType = PropertyTypeConstants.PROPERTY_TYPE_BOOLEAN)
   @SimpleProperty(description = "Should the extension create components on UI thread.")
   public void CreateComponentsOnUi(boolean value) {
     createComponentsOnUi = value;
@@ -207,17 +218,26 @@ public class Tasks extends AndroidNonvisibleComponent {
 
   @SimpleFunction(description = "Destroys a component and it's events.")
   public void DestroyComponent(String name, long time) {
-    tasksID.add(taskID + ID_SEPARATOR + TASK_DESTROY_COMPONENT);
-    pendingTasks.put(taskID, toObjectArray(name, time));
+    tasksID.add(taskID + Constants.ID_SEPARATOR + Constants.TASK_DESTROY_COMPONENT);
+    pendingTasks.put(taskID, Utils.toObjectArray(name, time));
     taskID++;
   }
 
   @SimpleFunction(description = "Starts the service. The app must be alive to call this block or put it in the onDestroy or onPause event. This block only helps if the app is compiled and not the companion.")
   public boolean Start(int id, long latency, String requiredNetwork, boolean foreground) {
-    if(activity.getPackageName().equals("edu.mit.appinventor.aicompanion3")) {
-      Toast.makeText(activity, "This extension does not work in Companion!", Toast.LENGTH_SHORT).show();
+    String packageName = activity.getPackageName();
+
+    if(packageName.equals("edu.mit.appinventor.aicompanion3") ||
+            packageName.equals("io.makeroid.companion")) {
+      showToast("This extension does not work in Companion!");
       return false;
     }
+
+    if(componentsList.size() == 0) {
+      showToast("Invalid input of tasks.");
+      return false;
+    }
+
     Tasks.foreground = foreground;
 
     saveFunctions(id);
@@ -233,10 +253,7 @@ public class Tasks extends AndroidNonvisibleComponent {
 
   @SimpleFunction(description = "Sets the title, subtitle and icon for the foreground service. If the icon is empty, the app default icon will be set.")
   public void ConfigureForeground(String title, String content, String subtext, String icon) {
-    foregroundConfig[0] = title;
-    foregroundConfig[1] = content;
-    foregroundConfig[2] = subtext;
-    foregroundConfig[3] = icon;
+    foregroundConfig = new Object[] {title, content, subtext, icon};
   }
 
   private boolean startTask(long time, int id, String requiredNetwork) {
@@ -251,11 +268,12 @@ public class Tasks extends AndroidNonvisibleComponent {
             .setExtras(bundle)
             .setMinimumLatency(time)
             .setOverrideDeadline(time + 10)
+            .setPersisted(true)
             .setBackoffCriteria(1, 0);
 
 
     if(!requiredNetwork.isEmpty()) {
-      int network_type = getNetworkInt(requiredNetwork);
+      int network_type = Utils.getNetworkInt(requiredNetwork);
       Log.d("Tasks", "startTask: " + network_type);
       myJobInfo.setRequiredNetworkType(network_type);
     }
@@ -266,32 +284,14 @@ public class Tasks extends AndroidNonvisibleComponent {
     return success;
   }
 
-  /*
-  @SimpleFunction
-  public void ScheduleService(int id, Calendar instant, String requiredNetwork) {
-    saveFunctions(id);
-    AlarmManager alarmManager = (AlarmManager) activity.getSystemService(Context.ALARM_SERVICE);
-    Intent intent = new Intent(activity, AlarmTask.class);
-
-    intent.putExtra("network", requiredNetwork);
-    intent.putExtra("id", id);
-
-    PendingIntent pendingIntent = PendingIntent.getBroadcast(activity, 1, intent, 0);
-    alarmManager.setExact(AlarmManager.RTC_WAKEUP, instant.getTimeInMillis(), pendingIntent);
-  }
-
-   */
-
   private void saveFunctions(int id) {
     ArrayList<Object> task = new ArrayList<>();
 
-    task.add(tasksID);
-    task.add(pendingTasks);
-    task.add(createComponentsOnUi);
-    task.add(componentsList);
-    task.add(statusFunctions);
-    task.add(foreground);
-    task.add(foregroundConfig);
+    task.add(tasksID); task.add(pendingTasks);
+    task.add(createComponentsOnUi); task.add(componentsList);
+    task.add(statusFunctions); task.add(foreground);
+    task.add(foregroundConfig); task.add(extraFunctions);
+    task.add(restartAfterKill);
 
     Utils.saveTask(activity, task, id);
   }
@@ -299,29 +299,46 @@ public class Tasks extends AndroidNonvisibleComponent {
 
 
   @SimpleFunction(description = "Flags the Android system that the task is over. This would help save app resources. Call this block when you're done with all you're tasks.")
-  public void FinishTask() {
-    tasksID.add(taskID + ID_SEPARATOR + TASK_FINISH);
-    pendingTasks.put(taskID, toObjectArray());
+  public void FinishTask(boolean reschedule) {
+    tasksID.add(taskID + Constants.ID_SEPARATOR + Constants.TASK_FINISH);
+    pendingTasks.put(taskID, Utils.toObjectArray(reschedule));
     taskID++;
   }
-
-//  @SimpleFunction(description = "Calls the function on app's action changed. Valid values are RESUME, PAUSE and KILL values.")
-//  public void StateChangedFunction(String functionId, String action) {
-//    statusFunctions.put(action, functionId);
-//  }
 
   @SimpleFunction(description = "Stops the given service ID. The service will not be executed.")
   public void CancelTask(int id) {
     try {
       jobScheduler.cancel(id);
-      Log.d(LOG_TAG, "Cancel: " + Utils.clearTask(id, activity));
+      Log.d(LOG_TAG, "Cancel status: " + Utils.clearTask(id, activity));
     } catch (Exception e) {
       Log.d(LOG_TAG, e.getMessage());
     }
   }
 
+  @SimpleFunction(description = "Gets the pending task IDs")
+  public YailList PendingServices() {
+    List<JobInfo> pendingTasks = jobScheduler.getAllPendingJobs();
+
+    ArrayList<Integer> tasksIds = new ArrayList<>();
+
+    for(JobInfo info: pendingTasks) {
+      tasksIds.add(info.getId());
+    }
+
+    return YailList.makeList(tasksIds);
+  }
+
+  @SimpleFunction(description = "Make a functions that can compare things and pass it to a function if the condition is true.")
+  public void ExtraFunction(String id, YailList codes) {
+    extraFunctions.put(id, codes.toArray());
+  }
+
   @SimpleFunction(description = "Cancels and stops all the tasks.")
   public void CancelAllTasks() {
     jobScheduler.cancelAll();
+  }
+
+  private void showToast(String message) {
+    Toast.makeText(activity, message, Toast.LENGTH_SHORT).show();
   }
 }

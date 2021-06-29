@@ -1,12 +1,12 @@
 name: Tasks           # Caution: DO NOT change the name.
-description: Extension component for Tasks. Created using Rush.
+description: Extension to run in the Background and in the foreground mode even if the app is closed.
 
 # For a detailed info on this file and supported fields, check
 # out this link: https://github.com/ShreyashSaitwal/rush-cli/wiki/Metadata-File
 
 version:
   number: auto        # Auto increments version number when built with '-r' (or '--release') flag.
-  name: 3.0
+  name: 3.2
 
 assets:
   icon: icon.png      # Extension icon

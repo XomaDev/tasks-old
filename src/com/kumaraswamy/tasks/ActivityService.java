@@ -11,21 +11,25 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.util.Log;
 import android.view.Window;
-import androidx.core.content.ContextCompat;
 import com.google.appinventor.components.runtime.AndroidViewComponent;
 import com.google.appinventor.components.runtime.Component;
 import com.google.appinventor.components.runtime.ComponentContainer;
 import com.google.appinventor.components.runtime.Form;
 import com.google.appinventor.components.runtime.util.YailList;
-import com.kumaraswamy.tasks.external.NotificationStyle;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import static com.kumaraswamy.tasks.Utils.findMethod;
 
@@ -36,10 +40,16 @@ public class ActivityService extends JobService {
     private final HashMap<String, Object[]> createdFunctions = new HashMap<>();
     private final HashMap<String, Object> createdVariables = new HashMap<>();
     private final HashMap<String, Object[]> eventMap = new HashMap<>();
+    private HashMap<String, Object[]> extraFunctions = new HashMap<>();
+
+    private ArrayList<String> tasksID;
+    private HashMap<String, Object[]> pendingTasks;
+    private JobParameters jobParameters;
+    private static HashMap<String, String> statusFunctions;
 
     private boolean createComponentsOnUi = false;
+    private boolean restartAfterKill = false;
 
-    private ComponentContainer container;
     private AActivity activity;
     private FForm form;
 
@@ -61,34 +71,29 @@ public class ActivityService extends JobService {
 
         form = new FForm();
         form.init(getApplicationContext());
-        container = new CComponentContainer(this);
-
-
-        /*
-             What is field and why we're using this?
-             For components like player the component needs to access the window
-             just to apply some settings, If we do not do this, the window "Activity.getWindow()" maybe null.
-             So we're setting the variable "mWindow" to the value of a dummy Window object so the component can do operations on
-             it.
-             https://android.googlesource.com/platform/frameworks/base/+/master/core/java/android/app/Activity.java
-             You could see the Activity source code here. We also do this to the form because form is like activity to say in a simple
-             way.
-             Refer more about this problem/soln:
-             https://community.appinventor.mit.edu/t/create-a-new-custom-component-container-that-works-for-every-component-created-by-reflection/35638?u=kumaraswamy_b.g
-             https://developer.android.com/reference/java/lang/reflect/Field
-         */
 
         Field field = activity.getClass().getSuperclass().getDeclaredField("mWindow");
         field.setAccessible(true);
         Window dummyWindowResult = new Dialog(getApplicationContext()).getWindow();
+
         if(dummyWindowResult == null) {
             Log.d(TAG, "initService: Window result is null and may be Unstable");
         } else {
             field.set(activity, dummyWindowResult);
             field.set(form, dummyWindowResult);
         }
+
+        field = activity.getClass().getSuperclass().getDeclaredField("mComponent");
+        field.setAccessible(true);
+
+        ComponentName componentName = new ComponentName(activity.getPackageName(), activity.getPackageName() + ".Screen1");
+
+        field.set(activity, componentName);
+        field.set(form, componentName);
+
         doBackgroundWork(jobParameters);
     }
+
 
     private void doBackgroundWork(final JobParameters jobParameters) {
         Log.d(TAG, "The service is started");
@@ -105,14 +110,14 @@ public class ActivityService extends JobService {
         }).start();
     }
 
-    private ArrayList<String> tasksID;
-    private HashMap<String, Object[]> pendingTasks;
-    private JobParameters jobParameters;
-    private static HashMap<String, String> statusFunctions;
-
     private void processTasks(JobParameters jobParameters) {
         int jobID = jobParameters.getExtras().getInt("JOB_ID");
         ArrayList<Object> tasksRead = Utils.readTask(getApplicationContext(), jobID);
+
+        if(tasksRead == null) {
+            Log.i(TAG, "processTasks: Tasks are null are invalid");
+            return;
+        }
 
         Log.d(TAG, "Got data from database: " + tasksRead.toString());
 
@@ -123,17 +128,24 @@ public class ActivityService extends JobService {
         boolean foreground = (boolean) tasksRead.get(5);
         Object[] foregroundConfig = (Object[]) tasksRead.get(6);
 
+        PowerManager powerManager = (PowerManager) getApplicationContext().getSystemService(Context.POWER_SERVICE);
+        PowerManager.WakeLock wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ActivityServiceWakeLock");
+        wakeLock.acquire();
+
+        extraFunctions = (HashMap<String, Object[]>) tasksRead.get(7);
+
         if(foreground) {
-            processForeground(foregroundConfig, jobID);
+            processForeground(foregroundConfig);
         }
 
         this.jobParameters = jobParameters;
         createComponentsOnUi = (boolean) tasksRead.get(2);
+        restartAfterKill = (boolean) tasksRead.get(8);
 
         processComponentList(componentsList);
     }
 
-    private void processForeground(Object[] foregroundConfig, int jobid) {
+    private void processForeground(Object[] foregroundConfig) {
         Log.i(TAG, "processForeground: " + foregroundConfig[2]);
 
         if (Build.VERSION.SDK_INT >= 26) {
@@ -164,27 +176,16 @@ public class ActivityService extends JobService {
 
             startForeground(1, notification);
         }
-
-//        String icon = foregroundConfig[2].toString();
-//        int intIcon = -1;
-//
-//        if (!icon.isEmpty() && !icon.equals("DEFAULT")) {
-//            intIcon = Integer.parseInt(icon);
-//        }
-//
-//        if (Build.VERSION.SDK_INT >= 26) {
-//            NotificationStyle notificationStyle = new NotificationStyle(container);
-//            startForeground(1, notificationStyle.SimpleNotification(foregroundConfig[0].toString(), foregroundConfig[1].toString(), false, "", 1, intIcon));
-//        }
     }
 
-    private void doMainTask() {
+
+    private void processMainTasks() {
         Log.d(TAG, "Total tasks: " + tasksID.size());
 
         for (String tasks: tasksID) {
             Log.d(TAG, "Processing the task: " + tasks);
 
-            String[] taskData = tasks.split(Tasks.ID_SEPARATOR);
+            String[] taskData = tasks.split(Constants.ID_SEPARATOR);
 
             int taskID = Integer.parseInt(taskData[0]);
             int taskType = Integer.parseInt(taskData[1]);
@@ -194,31 +195,31 @@ public class ActivityService extends JobService {
             Object[] taskValues = pendingTasks.get(taskID);
             Log.d(TAG, "Task values: " + Arrays.toString(taskValues));
 
-            if (taskType == Tasks.TASK_CREATE_FUNCTION) {
+            if (taskType == Constants.TASK_CREATE_FUNCTION) {
                 Log.d(TAG, "Received task to create a function");
                 createFunction(taskValues);
-            } else if(taskType == Tasks.TASK_INVOKE_FUNCTION) {
+            } else if(taskType == Constants.TASK_INVOKE_FUNCTION) {
                 Log.d(TAG, "Received task to invoke a function");
                 invokeFunction(taskValues[0].toString(), null);
-            } else if(taskType == Tasks.TASK_DELAY) {
+            } else if(taskType == Constants.TASK_DELAY) {
                 try {
                     Thread.sleep((Long) taskValues[0]);
                 } catch (InterruptedException e) {
                     Log.e(TAG, e.getMessage());
                 }
-            } else if(taskType == Tasks.TASK_CREATE_VARIABLE) {
+            } else if(taskType == Constants.TASK_CREATE_VARIABLE) {
                 Log.d(TAG, "Received task to create a variable");
                 createVariable(taskValues);
-            } else if(taskType == Tasks.TASK_FINISH) {
+            } else if(taskType == Constants.TASK_FINISH) {
                 Log.d(TAG, "Received task to end the task");
-                jobFinished(jobParameters, false);
-            } else if(taskType == Tasks.TASK_EXECUTE_FUNCTION) {
+                jobFinished(jobParameters, (Boolean) taskValues[0]);
+            } else if(taskType == Constants.TASK_EXECUTE_FUNCTION) {
                 Log.d(TAG, "processTasks: Received task to execute a function");
                 executeFunction(taskValues);
-            } else if(taskType == Tasks.TASK_REGISTER_EVENT) {
+            } else if(taskType == Constants.TASK_REGISTER_EVENT) {
                 Log.d(TAG, "processTasks: Received task to register event");
                 registerEvent(taskValues);
-            } else if (taskType == Tasks.TASK_DESTROY_COMPONENT) {
+            } else if (taskType == Constants.TASK_DESTROY_COMPONENT) {
                 Log.d(TAG, "processTasks: Got task to destroy a component");
                 destroyComponent(taskValues);
             }
@@ -285,7 +286,7 @@ public class ActivityService extends JobService {
                 if(times == timesExecuted[0]) {
                     timer.cancel();
                 } else {
-                    Log.d(TAG, "run: Executing the function name: " + function);
+                    Log.d(TAG, "executeFunction: Executing the function name: " + function);
                     invokeFunction(function, null);
                     timesExecuted[0]++;
                 }
@@ -310,11 +311,13 @@ public class ActivityService extends JobService {
     }
 
     private Object replaceVariables(Object result) {
-        for(String key: createdVariables.keySet()) {
-            String madeKey = "data:" + key;
-            Log.d(TAG, "replaceVariables: Made key: " + madeKey);
-            if(result.toString().contains(madeKey)) {
-                result = result.toString().replaceAll(madeKey, createdVariables.get(key).toString());
+        if(result instanceof String) {
+            for(String key: createdVariables.keySet()) {
+                String madeKey = "data:" + key;
+                Log.d(TAG, "replaceVariables: Made key: " + madeKey);
+                if(result.toString().contains(madeKey)) {
+                    result = result.toString().replaceAll(madeKey, createdVariables.get(key).toString());
+                }
             }
         }
         return result;
@@ -343,7 +346,7 @@ public class ActivityService extends JobService {
                             saveComponentToHashmap((Component) CConstructor.newInstance(form),
                                     componentID, componentName);
                             if(lastKey.equals(componentID)) {
-                                doMainTask();
+                                processMainTasks();
                             }
                         } catch (Exception e) {
                             e.printStackTrace();
@@ -354,7 +357,7 @@ public class ActivityService extends JobService {
                 saveComponentToHashmap((Component) CConstructor.newInstance(form),
                         componentID, componentName);
                 if(lastKey.equals(componentID)) {
-                    doMainTask();
+                    processMainTasks();
                 }
             }
 
@@ -369,30 +372,35 @@ public class ActivityService extends JobService {
         Log.d(TAG, "createComponent: " + eventMap.toString());
     }
 
-    private void invokeFunction(String functionID, Object[] eventValues) {
+    private Object invokeFunction(String functionID, Object[] eventValues) {
         Log.d(TAG, createdFunctions.toString());
         final Object[] taskValues = createdFunctions.get(functionID);
 
         if(taskValues == null || taskValues.length == 0) {
             Log.d(TAG, "Invalid invoke values provided");
-            return;
+            return "";
         }
 
         final String componentID = taskValues[0].toString();
         final String functionName = taskValues[1].toString();
         final Object[] parameters = ((YailList) taskValues[2]).toArray();
 
+
         if(componentID.equals("self") && functionName.equals("exit-foreground")) {
             Log.i(TAG, "invokeFunction: Stopping function dynamic");
             stopForeground((Boolean) parameters[0]);
+        } else if(componentID.equals("self") && functionName.equals("exit")){
+            Log.i(TAG, "invokeFunction: Stopping the service");
+            jobFinished(jobParameters, (Boolean) parameters[0]);
         } else {
             Log.d(TAG, "Invoking function of component ID: " + componentID + ", function name: " + functionName + ", parameters: " + Arrays.toString(parameters));
             Log.d(TAG, "invokeFunction: " + componentsBuilt.toString());
-            invokeComponent(componentID, functionName, parameters, eventValues);
+            return invokeComponent(componentID, functionName, parameters, eventValues);
         }
+        return null;
     }
 
-    private void invokeComponent(String componentID, String functionName, Object[] parameters, Object[] eventValues) {
+    private Object invokeComponent(String componentID, String functionName, Object[] parameters, Object[] eventValues) {
         try {
             if (eventValues == null) {
                 eventValues = new Object[] {};
@@ -405,7 +413,7 @@ public class ActivityService extends JobService {
 
             if(method == null) {
                 Log.e(TAG, "Function name: " + functionName + " may not exist");
-                return;
+                return null;
             }
 
             int index = 0;
@@ -449,8 +457,10 @@ public class ActivityService extends JobService {
 
             invokeResult = method.invoke(component, mParametersArrayList.toArray());
             Log.d(TAG, "Invoked method name: " + functionName + ", component ID: " + componentID + ", invoke result: " + invokeResult);
+            return invokeResult;
         } catch (IllegalAccessException | InvocationTargetException e) {
             e.printStackTrace();
+            return null;
         }
     }
 
@@ -459,8 +469,6 @@ public class ActivityService extends JobService {
             String[] value = (String[]) object;
 
             Log.d(TAG, "Found interpret value class: " + Arrays.toString(value));
-
-            // bol parse log try
 
             String text = value[0];
             boolean isCode = Boolean.parseBoolean(value[1]);
@@ -545,21 +553,25 @@ public class ActivityService extends JobService {
             } else if(text.equals("invoke:result")) {
                 Log.d(TAG, String.valueOf("Is invoke result null while interpreting due to request: " + invokeResult == null));
                 return invokeResult == null ? "" : invokeResult;
+            } else if(text.startsWith("invoke:[") && text.charAt(text.length() - 1) == ']') {
+                String functionId = text.substring(8);
+                functionId = functionId.substring(0, functionId.length() - 1);
+                Log.i(TAG, "processValue: Processing extra value of executing function value: " + functionId);
+
+                Object result = invokeFunction(functionId, null);
+                return result == null ? "" : result;
             }
         }
         return object;
     }
 
     public void newEvent(Component component, String eventName, final Object[] array) {
-        Log.d(TAG, "newEvent: " + componentsBuilt.toString());
-        Log.d(TAG, "newEvent: " + eventName);
-        Log.d(TAG, "newEvent: " + Arrays.toString(array));
+        Log.d(TAG, "newEvent: Component " + componentsBuilt.toString() + " eventName " + eventName + " values " + array);
 
         String componentID = "";
 
         for(String key: componentsBuilt.keySet()) {
             if (componentsBuilt.get(key).toString().equals(component.toString())) {
-//                Log.i(TAG, "newEvent: Got the key value for the component event: " + key);
                 componentID = key;
                 break;
             }
@@ -568,7 +580,6 @@ public class ActivityService extends JobService {
         Object[] invokeValues = eventMap.get(componentID);
 
         if(invokeValues == null) {
-//            Log.d(TAG, "newEvent: Dismissed because invoke values is null");
             return;
         }
 
@@ -579,7 +590,36 @@ public class ActivityService extends JobService {
         String thisEventName = invokeValues[1].toString();
 
         if (thisEventName.equals(eventName)) {
-            invokeFunction(functionID, array);
+            if(functionID.startsWith("$")) {
+                Log.i(TAG, "Function has an extra function Id");
+                functionID = functionID.substring(1);
+
+                Object[] values = extraFunctions.get(functionID);
+                Log.i(TAG, "Extra function values : " + Arrays.toString(values));
+                ArrayList<String[]> results = new ArrayList<>();
+
+                for(Object object: values) {
+                    Object result = Utils.CodeParser.processCode(object.toString(), this.getApplicationContext(), array);
+
+                    if(!result.toString().equals("none")) {
+                        Log.i(TAG, "newEvent: The parsed result is: " + Arrays.toString(((String[]) result)));
+                        results.add((String[]) result);
+                    }
+                }
+
+                for(String[] stringArray: results) {
+                    String functionName = stringArray[0].toLowerCase();
+                    String functionId = stringArray[1];
+
+                    if(functionName.equals("function")) {
+                        invokeFunction(functionId, array);
+                    }
+                }
+
+                Log.i(TAG, "newEvent: The values received and prepared: " + results);
+            } else {
+                invokeFunction(functionID, array);
+            }
         } else {
             Log.i(TAG, "newEvent: Event dismissed as it's not registered");
         }
@@ -636,11 +676,6 @@ public class ActivityService extends JobService {
         public void onResume() {
             processStatus("RESUME");
         }
-
-//        @Override
-//        public Window getWindow() {
-//            return new Builder(this).setTitle("Title").setMessage("Message").create().getWindow();
-//        }
     }
 
     static class AActivity extends Activity {
@@ -657,60 +692,6 @@ public class ActivityService extends JobService {
         public void onCreate(Bundle bundle) {
             super.onCreate(bundle);
         }
-
-        @Override
-        public ComponentName getComponentName() {
-            String applicationPackage = this.getPackageName();
-            return new ComponentName(applicationPackage, applicationPackage + "Screen1");
-        }
-
-//        @Override
-//        public Window getWindow() {
-//            return new Builder(this).setTitle("").setMessage("").create().getWindow();
-//        }
-    }
-
-    static class CComponentContainer implements ComponentContainer {
-        private final ActivityService service;
-
-        public CComponentContainer(ActivityService service){
-            this.service = service;
-        }
-
-        @Override
-        public Activity $context() {
-            return service.activity;
-        }
-
-        @Override
-        public Form $form() {
-            return service.form;
-        }
-
-        @Override
-        public void $add(AndroidViewComponent androidViewComponent) {
-
-        }
-
-        @Override
-        public void setChildWidth(AndroidViewComponent androidViewComponent, int i) {
-
-        }
-
-        @Override
-        public void setChildHeight(AndroidViewComponent androidViewComponent, int i) {
-
-        }
-
-        @Override
-        public int Width() {
-            return 1;
-        }
-
-        @Override
-        public int Height() {
-            return 1;
-        }
     }
 
     @Override
@@ -719,7 +700,7 @@ public class ActivityService extends JobService {
         for(String componentId: componentsBuilt.keySet()) {
             destroyComponent(new Object[]{componentId, System.currentTimeMillis() + 1});
         }
-        jobFinished(jobParameters, false);
-        return false;
+        jobFinished(jobParameters, restartAfterKill);
+        return restartAfterKill;
     }
 }
