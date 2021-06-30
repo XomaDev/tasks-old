@@ -12,7 +12,6 @@ import android.os.PersistableBundle;
 import android.util.Log;
 import android.view.WindowManager;
 import android.widget.Toast;
-
 import com.google.appinventor.components.annotations.DesignerProperty;
 import com.google.appinventor.components.annotations.SimpleFunction;
 import com.google.appinventor.components.annotations.SimpleProperty;
@@ -295,7 +294,6 @@ public class Tasks extends AndroidNonvisibleComponent {
 
     Utils.saveTask(activity, task, id);
   }
-
 
 
   @SimpleFunction(description = "Flags the Android system that the task is over. This would help save app resources. Call this block when you're done with all you're tasks.")

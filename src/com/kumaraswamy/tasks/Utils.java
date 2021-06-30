@@ -171,9 +171,6 @@ public class Utils {
                 condition = condition.substring(0, condition.length() - 1);
             }
 
-            System.out.println(execute);
-            System.out.println(condition);
-
             Object result = interpret("return " + condition + ";", activity);
 
             Log.i(TAG, "processCode: The custom function result: " + result);

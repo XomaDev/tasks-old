@@ -14,7 +14,6 @@ import android.os.Bundle;
 import android.os.PowerManager;
 import android.util.Log;
 import android.view.Window;
-import com.google.appinventor.components.runtime.AndroidViewComponent;
 import com.google.appinventor.components.runtime.Component;
 import com.google.appinventor.components.runtime.ComponentContainer;
 import com.google.appinventor.components.runtime.Form;
@@ -177,7 +176,6 @@ public class ActivityService extends JobService {
             startForeground(1, notification);
         }
     }
-
 
     private void processMainTasks() {
         Log.d(TAG, "Total tasks: " + tasksID.size());
@@ -388,7 +386,9 @@ public class ActivityService extends JobService {
 
         if(componentID.equals("self") && functionName.equals("exit-foreground")) {
             Log.i(TAG, "invokeFunction: Stopping function dynamic");
-            stopForeground((Boolean) parameters[0]);
+            if(parameters.length > 0) {
+                stopForeground((Boolean) parameters[0]);
+            }
         } else if(componentID.equals("self") && functionName.equals("exit")){
             Log.i(TAG, "invokeFunction: Stopping the service");
             jobFinished(jobParameters, (Boolean) parameters[0]);
