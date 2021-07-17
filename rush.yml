@@ -6,7 +6,7 @@ description: Extension to run in the Background and in the foreground mode even 
 
 version:
   number: auto        # Auto increments version number when built with '-r' (or '--release') flag.
-  name: 3.2
+  name: 3.4
 
 assets:
   icon: icon.png      # Extension icon
