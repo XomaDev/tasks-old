@@ -29,7 +29,6 @@ public class BootReceiver extends BroadcastReceiver {
             }
 
 
-
             PersistableBundle bundle = new PersistableBundle();
             bundle.putInt("JOB_ID", 777);
             bundle.putBoolean("PERIODIC", false);
@@ -53,7 +52,7 @@ public class BootReceiver extends BroadcastReceiver {
         }
     }
 
-    public void showNotification(Context context, String title, String body) {
+    public static void showNotification(Context context, String title, String body) {
         NotificationManager notificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
 
         int notificationId = 1;

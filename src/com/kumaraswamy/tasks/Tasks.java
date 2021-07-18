@@ -1,6 +1,8 @@
 package com.kumaraswamy.tasks;
 
 import android.app.Activity;
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
 import android.content.ComponentName;
@@ -24,10 +26,7 @@ import com.google.appinventor.components.runtime.errors.YailRuntimeError;
 import com.google.appinventor.components.runtime.util.YailList;
 import com.kumaraswamy.tasks.reflect.ComponentManager;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
+import java.util.*;
 
 public class Tasks extends AndroidNonvisibleComponent {
 
@@ -55,6 +54,7 @@ public class Tasks extends AndroidNonvisibleComponent {
 
     private final Activity activity;
     private JobScheduler jobScheduler;
+    private AlarmManager alarmManager;
 
     public Tasks(ComponentContainer container) {
         super(container.$form());
@@ -67,7 +67,10 @@ public class Tasks extends AndroidNonvisibleComponent {
 
         ResetTaskList();
         activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
         jobScheduler = (JobScheduler) activity.getSystemService(Context.JOB_SCHEDULER_SERVICE);
+        alarmManager = (AlarmManager) activity.getSystemService(Context.ALARM_SERVICE);
+
         tinyDB = new TinyDB(container);
         tinyDB.Namespace("TasksInfo11");
     }
@@ -264,12 +267,15 @@ public class Tasks extends AndroidNonvisibleComponent {
         extraForeground = new Object[]{title, content, subtext, icon};
     }
 
-    private boolean startTask(long time, int id, String requiredNetwork) {
+    private void saveTask(int id) {
         final ArrayList<Object> objectArrayList = prepareList(tasksProcessList, pendingTasks, false, componentsList,
                 null, foreground, extraForeground, extraFunctions, restartAfterKill, serviceFlags);
 
         Utils.saveTask(activity, objectArrayList, id);
+    }
 
+    private boolean startTask(long time, int id, String requiredNetwork) {
+        saveTask(id);
         if(id == 777) {
             return true;
         }
@@ -355,6 +361,45 @@ public class Tasks extends AndroidNonvisibleComponent {
         }
 
         return YailList.makeList(tasksIds);
+    }
+
+    @SimpleFunction
+    public void Alarm(Calendar time, int id) {
+        saveTask(id);
+
+        Intent intent = new Intent(activity, AlarmReceiver.class);
+        intent.putExtra("id", id);
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(activity, 1, intent, 0);
+
+
+        if (time.before(Calendar.getInstance())) {
+            time.add(Calendar.DATE, 1);
+        }
+        alarmManager.setExact(AlarmManager.RTC_WAKEUP, time.getTimeInMillis(), pendingIntent);
+        ResetTaskList();
+    }
+
+    @SimpleFunction
+    public void RepeatingAlarm(Calendar time, long interval, int id) {
+        saveTask(id);
+
+        Intent intent = new Intent(activity, AlarmReceiver.class);
+        intent.putExtra("id", id);
+
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(activity, 1, intent, 0);
+        if (time.before(Calendar.getInstance())) {
+            time.add(Calendar.DATE, 1);
+        }
+
+        alarmManager.setRepeating(AlarmManager.RTC_WAKEUP, time.getTimeInMillis(), interval, pendingIntent);
+        ResetTaskList();
+    }
+
+    @SimpleFunction
+    public void CancelAlarm() {
+        Intent intent = new Intent(activity, AlarmManager.class);
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(activity, 1, intent, 0);
+        alarmManager.cancel(pendingIntent);
     }
 
     @SimpleFunction(description = "Make a functions that can compare things and pass it to a function if the " +
