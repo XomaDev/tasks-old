@@ -539,11 +539,13 @@ public class ActivityService extends JobService {
             return;
         }
 
-//        final Object[] invokeValues = eventMap.get(componentId);
         final ArrayList<Object> valuesList = eventMap.get(componentId);
 
-        for (int i = 0; i < valuesList.size(); i++) {
+        if (valuesList == null) {
+            return;
+        }
 
+        for (int i = 0; i < valuesList.size(); i++) {
             Object[] invokeValues = (Object[]) valuesList.get(i);
 
             if (invokeValues != null) {

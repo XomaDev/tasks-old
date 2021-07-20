@@ -36,5 +36,6 @@ public class AlarmReceiver extends BroadcastReceiver {
         int resultCode = jobScheduler.schedule(myJobInfo.build());
         boolean success = (resultCode == JobScheduler.RESULT_SUCCESS);
         Log.i(TAG, "onReceive: " + success);
+        String val0 = "";
     }
 }
